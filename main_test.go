@@ -82,3 +82,28 @@ func TestFindPrimes_Orchestration(t *testing.T) { // Renamed
 		})
 	}
 }
+
+func TestSieveOfEratosthenesSequential(t *testing.T) {
+	testCases := []struct {
+		name     string
+		maxNum   int
+		expected []int
+	}{
+		{"primes up to 10", 10, []int{2, 3, 5, 7}},
+		{"primes up to 20", 20, []int{2, 3, 5, 7, 11, 13, 17, 19}},
+		{"primes up to 2", 2, []int{2}},
+		{"primes up to 1", 1, []int{}},
+		{"primes up to 0", 0, []int{}},
+		{"primes up to 30", 30, []int{2, 3, 5, 7, 11, 13, 17, 19, 23, 29}},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// `expected` is already sorted. `sieveOfEratosthenesSequential` produces sorted results.
+			primes := sieveOfEratosthenesSequential(tc.maxNum)
+			if !reflect.DeepEqual(primes, tc.expected) {
+				t.Errorf("sieveOfEratosthenesSequential(%d) = %v; want %v", tc.maxNum, primes, tc.expected)
+			}
+		})
+	}
+}

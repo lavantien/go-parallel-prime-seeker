@@ -46,6 +46,43 @@ const (
 	ProgressReportPrimes = 10000 // Report every 1000 primes found
 )
 
+// sieveOfEratosthenesSequential finds all primes up to maxNum using a sequential sieve.
+func sieveOfEratosthenesSequential(maxNum int) []int {
+	if maxNum < 2 {
+		return []int{}
+	}
+
+	// Create a boolean slice `isNotPrime` indexed from 0 to maxNum.
+	// isNotPrime[i] is true if i is NOT prime.
+	// Initialize all to false (meaning potentially prime).
+	isNotPrime := make([]bool, maxNum+1)
+	isNotPrime[0] = true // 0 is not prime
+	isNotPrime[1] = true // 1 is not prime
+
+	// Iterate from 2 up to sqrt(maxNum)
+	sqrtMax := int(math.Sqrt(float64(maxNum)))
+	for p := 2; p <= sqrtMax; p++ {
+		// If p is prime (i.e., isNotPrime[p] is false)
+		if !isNotPrime[p] {
+			// Mark all multiples of p as not prime
+			// Start marking from p*p, as smaller multiples
+			// would have been marked by smaller primes.
+			for multiple := p * p; multiple <= maxNum; multiple += p {
+				isNotPrime[multiple] = true
+			}
+		}
+	}
+
+	// Collect primes
+	primes := make([]int, 0)
+	for i := 2; i <= maxNum; i++ {
+		if !isNotPrime[i] {
+			primes = append(primes, i)
+		}
+	}
+	return primes
+}
+
 // findPrimes orchestrates the prime finding process with multiple workers.
 func findPrimes(maxNum int, numWorkers int) []int {
 	jobs := make(chan int, maxNum)
