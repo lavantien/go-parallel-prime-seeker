@@ -53,52 +53,52 @@ The program provides progress updates using the `log` package:
 
 ```mermaid
 graph TD
-    A[Main Goroutine] -- Starts & Orchestrates --> FPG[findPrimesWithSieve Function]
+    A[Main Goroutine] -- "Starts & Orchestrates" --> FPG["findPrimesWithSieve Function"]
 
-    subgraph findPrimesWithSieve Function
-        P1[Phase 1: Sequential Sieve for Base Primes]
-        P2[Phase 2: Initialize Main Sieve Array]
-        P3[Phase 3: Parallel Marking]
-        P4[Phase 4: Collect Results]
+    subgraph "findPrimesWithSieve Function"
+        P1["Phase 1: Sequential Sieve for Base Primes"]
+        P2["Phase 2: Initialize Main Sieve Array"]
+        P3["Phase 3: Parallel Marking"]
+        P4["Phase 4: Collect Results"]
     end
 
-    FPG -- Executes --> P1
-    P1 -- Returns `basePrimes` --> FPG
-    FPG -- Executes --> P2
-    P2 -- Creates `isNotPrime` array --> FPG
-    FPG -- Spawns Workers for --> P3
-    FPG -- Waits via `sync.WaitGroup` --> P3
-    FPG -- Executes --> P4
-    P4 -- Returns `finalPrimes` --> FPG
+    FPG -- "Executes" --> P1
+    P1 -- "Returns basePrimes" --> FPG
+    FPG -- "Executes" --> P2
+    P2 -- "Creates isNotPrime array" --> FPG
+    FPG -- "Spawns Workers for" --> P3
+    FPG -- "Waits via sync.WaitGroup" --> P3
+    FPG -- "Executes" --> P4
+    P4 -- "Returns finalPrimes" --> FPG
 
-    subgraph Phase 3: Parallel Marking
-        W1[Worker 1 Goroutine]
-        W2[Worker 2 Goroutine]
-        W3[Worker 3 Goroutine]
-        W4[Worker 4 Goroutine]
-        SharedSieve[Shared `isNotPrime` Array]
-        WG[sync.WaitGroup]
+    subgraph "Phase 3: Parallel Marking"
+        W1["Worker 1 Goroutine"]
+        W2["Worker 2 Goroutine"]
+        W3["Worker 3 Goroutine"]
+        W4["Worker 4 Goroutine"]
+        SharedSieve["Shared isNotPrime Array"]
+        SysWG["sync.WaitGroup"]
 
-        P3 -- Manages --> WG
-        P3 -- Distributes `basePrimes` segments --> W1
-        P3 -- Distributes `basePrimes` segments --> W2
-        P3 -- Distributes `basePrimes` segments --> W3
-        P3 -- Distributes `basePrimes` segments --> W4
+        P3 -- "Manages" --> SysWG
+        P3 -- "Distributes basePrimes segments" --> W1
+        P3 -- "Distributes basePrimes segments" --> W2
+        P3 -- "Distributes basePrimes segments" --> W3
+        P3 -- "Distributes basePrimes segments" --> W4
 
-        W1 -- Marks Multiples in --> SharedSieve
-        W2 -- Marks Multiples in --> SharedSieve
-        W3 -- Marks Multiples in --> SharedSieve
-        W4 -- Marks Multiples in --> SharedSieve
+        W1 -- "Marks Multiples in" --> SharedSieve
+        W2 -- "Marks Multiples in" --> SharedSieve
+        W3 -- "Marks Multiples in" --> SharedSieve
+        W4 -- "Marks Multiples in" --> SharedSieve
 
-        W1 -- Calls `wg.Done()` --> WG
-        W2 -- Calls `wg.Done()` --> WG
-        W3 -- Calls `wg.Done()` --> WG
-        W4 -- Calls `wg.Done()` --> WG
+        W1 -- "Calls wg.Done()" --> SysWG
+        W2 -- "Calls wg.Done()" --> SysWG
+        W3 -- "Calls wg.Done()" --> SysWG
+        W4 -- "Calls wg.Done()" --> SysWG
     end
 
-    Log[Logging Output]
-    A -- Interacts with --> Log
-    FPG -- Interacts with --> Log
+    Log["Logging Output"]
+    A -- "Interacts with" --> Log
+    FPG -- "Interacts with" --> Log
 
     style FPG fill:#f9f,stroke:#333,stroke-width:2px
     style P1 fill:#lightgrey,stroke:#333
@@ -110,56 +110,59 @@ graph TD
     style W3 fill:#aqua,stroke:#333
     style W4 fill:#aqua,stroke:#333
     style SharedSieve fill:#orange,stroke:#333
+    style SysWG fill:#grey,stroke:#333
+    style Log fill:#beige,stroke:#333
 ```
 
 ## Algorithm Flowchart
 
 ```mermaid
 graph TD
-    Start["Start findPrimesWithSieve maxNum, numWorkers"] --> CheckMax{maxNum < 2?}
-    CheckMax -- Yes --> ReturnEmpty["Return []int{}"] --> End
-    CheckMax -- No --> InitTotalTime[Record Start Time]
+    Start["Start findPrimesWithSieve maxNum, numWorkers"] --> CheckMax{"maxNum < 2?"}
+    CheckMax -- "Yes" --> ReturnEmpty["Return empty int slice"] --> EndA["End"]
+    CheckMax -- "No" --> InitTotalTime["Record Start Time"]
 
-    InitTotalTime --> Phase1Start[Phase 1: Find Base Primes]
+    InitTotalTime --> Phase1Start["Phase 1: Find Base Primes"]
     Phase1Start --> SeqSieve["Run Sequential Sieve up to sqrt(maxNum)"]
-    SeqSieve --> StoreBasePrimes[Store `basePrimes`]
-    StoreBasePrimes --> LogBasePrimes[Log: Found basePrimes]
+    SeqSieve --> StoreBasePrimes["Store basePrimes"]
+    StoreBasePrimes --> LogBasePrimes["Log: Found basePrimes"]
 
-    LogBasePrimes --> Phase2Start[Phase 2: Initialize Main Sieve]
-    Phase2Start --> CreateSieveArray["Create `isNotPrime` boolean array size maxNum+1"]
+    LogBasePrimes --> Phase2Start["Phase 2: Initialize Main Sieve"]
+    Phase2Start --> CreateSieveArray["Create 'isNotPrime' boolean array size maxNum+1"]
     CreateSieveArray --> Mark01["Mark isNotPrime[0] and isNotPrime[1] = true"]
 
-    Mark01 --> Phase3Start[Phase 3: Parallel Marking]
-    Phase3Start --> InitWaitGroup[Initialize `sync.WaitGroup`]
-    InitWaitGroup --> DistributeWork["Distribute `basePrimes` among `numWorkers`"]
-    DistributeWork --> LoopWorkers{Loop for each Worker 0 to numWorkers-1}
-    LoopWorkers -- Spawn Goroutine --> WorkerJob[Worker Goroutine]
+    Mark01 --> Phase3Start["Phase 3: Parallel Marking"]
+    Phase3Start --> InitWaitGroup["Initialize sync.WaitGroup"]
+    InitWaitGroup --> DistributeWork["Distribute basePrimes among numWorkers"]
+    DistributeWork --> LoopWorkers{"Loop for each Worker 0 to numWorkers-1"}
+    LoopWorkers -- "Spawn Goroutine" --> WorkerJob["Worker Goroutine"]
     WorkerJob --> IncrementWG["wg.Add(1)"]
-    WorkerJob --> GetAssignedPrimes[Get its assigned segment of `basePrimes`]
-    WorkerJob --> LoopBasePrimes{For each assigned `p` in `basePrimes`}
-    LoopBasePrimes -- Iterate --> MarkMultiples["Mark multiples of `p` (from `p*p`) in `isNotPrime` as `true`"]
+    WorkerJob --> GetAssignedPrimes["Get its assigned segment of basePrimes"]
+    WorkerJob --> LoopBasePrimes{"For each assigned p in basePrimes"}
+    LoopBasePrimes -- "Iterate" --> MarkMultiples["Mark multiples of p (from p*p) in 'isNotPrime' as true"]
     MarkMultiples --> LoopBasePrimes
-    LoopBasePrimes -- Done with assigned primes --> DecrementWG["wg.Done()"]
+    LoopBasePrimes -- "Done with assigned primes" --> DecrementWG["wg.Done()"]
     DecrementWG --> WorkerEnd["Worker Goroutine Ends"]
 
 
-    LoopWorkers -- Next Worker Iteration --> LoopWorkers
-    LoopWorkers -- All Workers Spawned --> WaitAllWorkers["wg.Wait()"]
+    LoopWorkers -- "Next Worker Iteration" --> LoopWorkers
+    LoopWorkers -- "All Workers Spawned" --> WaitAllWorkers["wg.Wait()"]
 
-    WaitAllWorkers --> LogMarkingDone[Log: Parallel Marking Complete]
-    LogMarkingDone --> Phase4Start[Phase 4: Collect Results]
-    Phase4Start --> InitResultSlice[Initialize `finalPrimes` slice]
-    InitResultSlice --> LoopSieveArray{Iterate `i` from 2 to `maxNum`}
-    LoopSieveArray -- Check --> IsPrime{"isNotPrime[i] == false?"}
-    IsPrime -- Yes --> AddToResults[Add `i` to `finalPrimes`] --> LoopSieveArray
-    IsPrime -- No --> LoopSieveArray
-    LoopSieveArray -- Done Iterating --> LogCollectionDone[Log: Result Collection Complete]
+    WaitAllWorkers --> LogMarkingDone["Log: Parallel Marking Complete"]
+    LogMarkingDone --> Phase4Start["Phase 4: Collect Results"]
+    Phase4Start --> InitResultSlice["Initialize finalPrimes slice"]
+    InitResultSlice --> LoopSieveArray{"Iterate i from 2 to maxNum"}
+    LoopSieveArray -- "Check" --> IsPrime{"isNotPrime[i] == false?"}
+    IsPrime -- "Yes" --> AddToResults["Add i to finalPrimes"] --> LoopSieveArray
+    IsPrime -- "No" --> LoopSieveArray
+    LoopSieveArray -- "Done Iterating" --> LogCollectionDone["Log: Result Collection Complete"]
 
-    LogCollectionDone --> LogTotalTime[Log: Total Execution Time]
-    LogTotalTime --> ReturnResults[Return `finalPrimes`] --> End[End]
+    LogCollectionDone --> LogTotalTime["Log: Total Execution Time"]
+    LogTotalTime --> ReturnResults["Return finalPrimes"] --> EndB["End"]
 
     style Start fill:#lightgreen,stroke:#333,stroke-width:2px
-    style End fill:#lightcoral,stroke:#333,stroke-width:2px
+    style EndA fill:#lightcoral,stroke:#333,stroke-width:2px
+    style EndB fill:#lightcoral,stroke:#333,stroke-width:2px
     style WorkerJob fill:#lightblue,stroke:#333
     style WorkerEnd fill:#lightblue,stroke:#333
 ```
