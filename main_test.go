@@ -2,7 +2,6 @@ package main
 
 import (
 	"reflect"
-	"sort"
 	"testing"
 )
 
@@ -36,53 +35,6 @@ func TestIsPrime(t *testing.T) {
 	}
 }
 
-func TestFindPrimes_Orchestration(t *testing.T) { // Renamed
-	testCases := []struct {
-		name       string
-		maxNum     int
-		numWorkers int
-		expected   []int
-	}{
-		{
-			name:       "primes up to 10 with 1 worker",
-			maxNum:     10,
-			numWorkers: 1,
-			expected:   []int{2, 3, 5, 7},
-		},
-		{
-			name:       "primes up to 30 with 4 workers", // New test case
-			maxNum:     30,
-			numWorkers: 4,
-			expected:   []int{2, 3, 5, 7, 11, 13, 17, 19, 23, 29},
-		},
-		{
-			name:       "primes up to 50 with 2 workers", // Another case
-			maxNum:     50,
-			numWorkers: 2,
-			expected:   []int{2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47},
-		},
-		{
-			name:       "primes up to 1 (no primes) with 4 workers",
-			maxNum:     1,
-			numWorkers: 4,
-			expected:   []int{},
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			sort.Ints(tc.expected) // Ensure expected is sorted
-
-			primes := findPrimes(tc.maxNum, tc.numWorkers)
-			// findPrimes already sorts its output
-
-			if !reflect.DeepEqual(primes, tc.expected) {
-				t.Errorf("findPrimes(%d, %d) = %v; want %v", tc.maxNum, tc.numWorkers, primes, tc.expected)
-			}
-		})
-	}
-}
-
 func TestSieveOfEratosthenesSequential(t *testing.T) {
 	testCases := []struct {
 		name     string
@@ -103,6 +55,66 @@ func TestSieveOfEratosthenesSequential(t *testing.T) {
 			primes := sieveOfEratosthenesSequential(tc.maxNum)
 			if !reflect.DeepEqual(primes, tc.expected) {
 				t.Errorf("sieveOfEratosthenesSequential(%d) = %v; want %v", tc.maxNum, primes, tc.expected)
+			}
+		})
+	}
+}
+
+func TestFindPrimesWithSieve_Orchestration(t *testing.T) {
+	testCases := []struct {
+		name       string
+		maxNum     int
+		numWorkers int
+		expected   []int // Expected results are the same, method differs
+	}{
+		{
+			name:       "sieve primes up to 10 with 1 worker", // NumWorkers for sieve affects marking distribution
+			maxNum:     10,
+			numWorkers: 1,
+			expected:   []int{2, 3, 5, 7},
+		},
+		{
+			name:       "sieve primes up to 30 with 4 workers",
+			maxNum:     30,
+			numWorkers: 4,
+			expected:   []int{2, 3, 5, 7, 11, 13, 17, 19, 23, 29},
+		},
+		{
+			name:       "sieve primes up to 50 with 2 workers",
+			maxNum:     50,
+			numWorkers: 2,
+			expected:   []int{2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47},
+		},
+		{
+			name:       "sieve primes up to 1 (no primes) with 4 workers",
+			maxNum:     1,
+			numWorkers: 4,
+			expected:   []int{},
+		},
+		// Add a slightly larger one if tests run fast enough
+		{
+			name:       "sieve primes up to 100 with 4 workers",
+			maxNum:     100,
+			numWorkers: 4,
+			expected:   []int{2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79, 83, 89, 97},
+		},
+	}
+
+	// Temporarily disable noisy logs for testing if needed
+	// originalFlags := log.Flags()
+	// log.SetOutput(io.Discard)
+	// log.SetFlags(0)
+	// defer func() {
+	//  log.SetOutput(os.Stderr)
+	//  log.SetFlags(originalFlags)
+	// }()
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// `expected` is already sorted. `findPrimesWithSieve` produces sorted results.
+			primes := findPrimesWithSieve(tc.maxNum, tc.numWorkers)
+			if !reflect.DeepEqual(primes, tc.expected) {
+				t.Errorf("findPrimesWithSieve(%d, %d) = %v; want %v", tc.maxNum, tc.numWorkers, primes, tc.expected)
 			}
 		})
 	}
