@@ -190,10 +190,7 @@ go run .
 
 **Results**:
 
-<details>
-    <summary>... expand</summary>
-
-```
+```txt
 01:34:45.155237 Concurrent Prime Finder (Sieve Version) - Starting
 01:34:45.155888 Finding primes up to 200000000 using 4 workers (Sieve method).
 01:34:45.155888 Sieve: Finding base primes up to 14142
@@ -217,8 +214,6 @@ go run .
 01:34:46.991943 Concurrent Prime Finder (Sieve Version) - Finished
 ```
 
-</details>
-
 ### Running Tests
 
 ```bash
@@ -226,9 +221,6 @@ go test -v -cover ./...
 ```
 
 **Results**:
-
-<details>
-    <summary>... expand</summary>
 
 ```go
 === RUN   TestIsPrime
@@ -313,5 +305,3 @@ PASS
 coverage: 86.8% of statements
 ok      go-parallel-prime-seeker        0.384s
 ```
-
-</details>
