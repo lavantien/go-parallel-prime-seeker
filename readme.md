@@ -1,5 +1,7 @@
 # Concurrent Prime Number Finder (Segmented Sieve)
 
+### Code Coverage: 84.6%
+
 A blazingly fast Go program that finds all prime numbers up to a specified limit (e.g., 200,000,000) using a parallelized Segmented Sieve of Eratosthenes algorithm. It leverages Goroutines for concurrent sieving of number segments, offering dynamic load balancing.
 
 ## Features
