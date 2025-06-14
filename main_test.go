@@ -36,11 +36,11 @@ func TestIsPrime(t *testing.T) {
 	}
 }
 
-func TestFindPrimes_SingleWorker(t *testing.T) {
+func TestFindPrimes_Orchestration(t *testing.T) { // Renamed
 	testCases := []struct {
 		name       string
 		maxNum     int
-		numWorkers int // Though we focus on single worker here, keep it for consistency
+		numWorkers int
 		expected   []int
 	}{
 		{
@@ -50,32 +50,31 @@ func TestFindPrimes_SingleWorker(t *testing.T) {
 			expected:   []int{2, 3, 5, 7},
 		},
 		{
-			name:       "primes up to 20 with 1 worker",
-			maxNum:     20,
-			numWorkers: 1,
-			expected:   []int{2, 3, 5, 7, 11, 13, 17, 19},
+			name:       "primes up to 30 with 4 workers", // New test case
+			maxNum:     30,
+			numWorkers: 4,
+			expected:   []int{2, 3, 5, 7, 11, 13, 17, 19, 23, 29},
 		},
 		{
-			name:       "primes up to 2 (edge case) with 1 worker",
-			maxNum:     2,
-			numWorkers: 1,
-			expected:   []int{2},
+			name:       "primes up to 50 with 2 workers", // Another case
+			maxNum:     50,
+			numWorkers: 2,
+			expected:   []int{2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47},
 		},
 		{
-			name:       "primes up to 1 (no primes) with 1 worker",
+			name:       "primes up to 1 (no primes) with 4 workers",
 			maxNum:     1,
-			numWorkers: 1,
-			expected:   []int{}, // Or nil, depending on how we handle empty slices
+			numWorkers: 4,
+			expected:   []int{},
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			// Ensure expected is sorted for comparison, as findPrimes sorts its output
-			sort.Ints(tc.expected)
+			sort.Ints(tc.expected) // Ensure expected is sorted
 
 			primes := findPrimes(tc.maxNum, tc.numWorkers)
-			// findPrimes already sorts its output, so no need to sort `primes` here.
+			// findPrimes already sorts its output
 
 			if !reflect.DeepEqual(primes, tc.expected) {
 				t.Errorf("findPrimes(%d, %d) = %v; want %v", tc.maxNum, tc.numWorkers, primes, tc.expected)

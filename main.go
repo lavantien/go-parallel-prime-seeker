@@ -1,13 +1,12 @@
 package main
 
 import (
-	"fmt"
+	"log" // Changed to log for potential progress later
 	"math"
-	"sort" // For consistent output in tests/main
+	"sort"
 	"sync"
 )
 
-// isPrime function (from previous step)
 func isPrime(n int) bool {
 	if n < 2 {
 		return false
@@ -27,71 +26,77 @@ func isPrime(n int) bool {
 	return true
 }
 
-// worker function
-// It receives numbers from the jobs channel.
-// If a number is prime, it sends it to the results channel.
-// wg.Done() is called when the jobs channel is closed and all jobs are processed.
 func worker(id int, jobs <-chan int, results chan<- int, wg *sync.WaitGroup) {
-	defer wg.Done() // Signal that this worker is done when the function returns
-	fmt.Printf("Worker %d starting\n", id)
+	defer wg.Done()
+	// log.Printf("Worker %d starting\n", id) // Can be noisy, make optional
 	for num := range jobs {
-		// fmt.Printf("Worker %d processing %d\n", id, num) // Optional: for detailed logging
 		if isPrime(num) {
 			results <- num
 		}
 	}
-	fmt.Printf("Worker %d finished\n", id)
+	// log.Printf("Worker %d finished\n", id) // Can be noisy
 }
 
-// findPrimes orchestrates the prime finding process.
-// For now, it uses a single worker.
+// Constants
+const (
+	DefaultMaxNumber  = 100000
+	DefaultNumWorkers = 4
+)
+
+// findPrimes orchestrates the prime finding process with multiple workers.
 func findPrimes(maxNum int, numWorkers int) []int {
-	jobs := make(chan int, maxNum)    // Buffer size can be tuned
-	results := make(chan int, maxNum) // Buffer size can be tuned
+	jobs := make(chan int, maxNum)    // Buffered channel for jobs
+	results := make(chan int, maxNum) // Buffered channel for results
 	var wg sync.WaitGroup
 
-	// Launch worker(s)
-	// For this commit, we'll explicitly launch just one for simplicity in understanding
-	// but design the function to take numWorkers.
-	// In the next step, we'll loop to launch `numWorkers`.
-	wg.Add(1)
-	go worker(1, jobs, results, &wg) // For now, only one worker with ID 1
+	// Launch numWorkers goroutines.
+	for w := 1; w <= numWorkers; w++ {
+		wg.Add(1)
+		go worker(w, jobs, results, &wg)
+	}
 
-	// Send jobs (numbers to check)
-	// This should be in a separate goroutine so it doesn't block closing `results` later.
+	// Send jobs (numbers to check) in a separate goroutine.
+	// This allows the main flow to proceed to collecting results.
 	go func() {
 		for i := 1; i <= maxNum; i++ {
 			jobs <- i
 		}
-		close(jobs) // Signal workers that no more jobs are coming
+		close(jobs) // Close jobs channel when all numbers are sent.
 	}()
 
-	// Wait for all workers to finish, then close the results channel.
-	// This must be in a separate goroutine to avoid deadlock.
-	// The main goroutine (findPrimes) needs to collect results,
-	// so it can't block on wg.Wait() before starting to collect.
+	// Collector goroutine: Waits for all workers to finish, then closes results.
+	// This is crucial. If wg.Wait() and close(results) were in the main `findPrimes`
+	// goroutine before the results collection loop, it would deadlock because
+	// it would wait for workers that might be blocked trying to send to `results`.
 	go func() {
 		wg.Wait()
-		close(results) // Signal that no more results will be sent
+		close(results) // Close results channel after all workers are done.
 	}()
 
-	// Collect results
+	// Collect results from the results channel until it's closed.
 	var primes []int
 	for prime := range results {
 		primes = append(primes, prime)
 	}
 
-	sort.Ints(primes) // Sort for consistent output and easier testing
+	sort.Ints(primes) // Sort for consistent output and easier testing.
 	return primes
 }
 
 func main() {
-	fmt.Println("Concurrent Prime Finder")
-	maxNumber := 30 // Small range for now
-	numWorkers := 1 // Single worker for this step
+	log.Println("Concurrent Prime Finder - Starting")
+
+	maxNumber := DefaultMaxNumber
+	numWorkers := DefaultNumWorkers // Use 4 workers as per requirement
+
+	log.Printf("Finding primes up to %d using %d workers.\n", maxNumber, numWorkers)
 
 	primes := findPrimes(maxNumber, numWorkers)
 
-	fmt.Printf("Prime numbers up to %d: %v\n", maxNumber, primes)
-	fmt.Printf("Found %d primes.\n", len(primes))
+	log.Printf("Found %d prime numbers up to %d.\n", len(primes), maxNumber)
+	// Optionally print all primes, but it's a lot for 100,000
+	// if maxNumber <= 100 {
+	//  log.Printf("Primes: %v\n", primes)
+	// }
+	log.Println("Concurrent Prime Finder - Finished")
 }
