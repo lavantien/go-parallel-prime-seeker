@@ -293,7 +293,7 @@ coverage: 84.6% of statements
 ok      go-parallel-prime-seeker        0.365s  coverage: 84.6% of statements
 ```
 
-## Benchmarking
+### Benchmarking
 
 ```bash
 go test -bench=.
