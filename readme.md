@@ -5,8 +5,9 @@ A Go program that finds all prime numbers between 1 and a specified upper limit 
 ## Features
 
 - Efficient prime number checking (`isPrime` function).
-- Efficient prime number checking (`isPrime` function).
 - Basic concurrent pipeline using a worker goroutine, jobs channel, and results channel.
+- Configurable number of workers and maximum number to check (via constants).
+- Simple progress logging.
 
 ## Concurrency Model (4 Workers)
 
