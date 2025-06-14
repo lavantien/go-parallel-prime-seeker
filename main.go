@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io"
 	"log"
 	"math"
 	"sort"
@@ -51,51 +52,51 @@ func findPrimes(maxNum int, numWorkers int) []int {
 	results := make(chan int, maxNum)
 	var wg sync.WaitGroup
 
+	// Launch numWorkers goroutines.
 	for w := 1; w <= numWorkers; w++ {
 		wg.Add(1)
 		go worker(w, jobs, results, &wg)
 	}
 
-	// Job dispatcher goroutine
+	// Send jobs (numbers to check) in a separate goroutine.
 	go func() {
-		// For progress based on numbers dispatched:
-		// dispatchedCount := 0
-		// lastReportedDispatched := 0
 		for i := 1; i <= maxNum; i++ {
 			jobs <- i
-			// dispatchedCount++
-			// if dispatchedCount-lastReportedDispatched >= ProgressReportNumbers {
-			//  log.Printf("Dispatched %d numbers for checking...\n", dispatchedCount)
-			//  lastReportedDispatched = dispatchedCount
-			// }
 		}
 		close(jobs)
-		// log.Printf("All %d numbers dispatched for checking.\n", dispatchedCount)
 	}()
 
-	// Collector goroutine for closing results channel
+	// Collector goroutine: Waits for all workers to finish, then closes results.
 	go func() {
 		wg.Wait()
 		close(results)
 	}()
 
-	var primes []int
+	// Collect results from the results channel until it's closed.
+	primes := make([]int, 0) // Initialize as empty, non-nil slice
+
 	foundCount := 0
 	startTime := time.Now()
 
-	log.Printf("Collecting results...\n")
+	// log.Printf("Collecting results...\n") // Keep or remove based on desired test log verbosity
 
 	for prime := range results {
 		primes = append(primes, prime)
 		foundCount++
-		if foundCount%ProgressReportPrimes == 0 {
-			// This will print progress for every 'ProgressReportPrimes' found
+		// Progress reporting logic can be here or simplified for tests
+		// For tests, often less logging is better unless debugging.
+		// The current progress logging is fine for main execution.
+		// It might be slightly noisy for `go test -v` if many test cases run findPrimes.
+		// For now, let's assume it's acceptable.
+		if foundCount%ProgressReportPrimes == 0 && log.Default().Writer() != io.Discard { // Check if logging is enabled
 			log.Printf("Found %d primes so far... (last prime: %d)\n", foundCount, prime)
 		}
 	}
 
-	elapsedTime := time.Since(startTime)
-	log.Printf("Collected all results in %s.\n", elapsedTime)
+	if log.Default().Writer() != io.Discard {
+		elapsedTime := time.Since(startTime)
+		log.Printf("Collected all results in %s.\n", elapsedTime)
+	}
 
 	sort.Ints(primes) // Sort for consistent output and easier testing.
 	return primes
