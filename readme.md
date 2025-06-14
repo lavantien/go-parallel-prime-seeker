@@ -1,217 +1,250 @@
-# Concurrent Prime Number Finder
+# Concurrent Prime Number Finder (Segmented Sieve)
 
-\[**Test Coverage**\]: *86.8%*
-
-A blazingly fast Go program that finds all prime numbers up to a specified limit (e.g., 200,000,000) using a parallelized Sieve of Eratosthenes algorithm. It leverages Goroutines for concurrent marking of composite numbers.
+A Go program that finds all prime numbers up to a specified limit (e.g., 200,000,000) using a parallelized Segmented Sieve of Eratosthenes algorithm. It leverages Goroutines for concurrent sieving of number segments, offering dynamic load balancing.
 
 ## Features
 
-- Efficient prime number generation using a parallel Sieve of Eratosthenes.
-- Uses a configurable number of worker Goroutines (e.g., 4) for the marking phase.
-- Initial base primes (up to `sqrt(maxNum)`) are found using a fast sequential sieve.
-- Simple progress logging for various stages of the sieve.
-- Optimized for finding all primes in a large continuous range.
+- Efficient prime number generation using a parallel Segmented Sieve of Eratosthenes.
+- Uses a configurable number of worker Goroutines.
+- The number range is divided into segments, which are processed in parallel by workers.
+- Dynamic load balancing: workers pull segment tasks from a channel.
+- Initial base primes (up to `sqrt(maxNum)`) are found using a fast optimized sequential sieve.
+- Primes found in segments are combined and sorted.
+- Progress logging for various stages of the sieve.
 
-## Algorithm: Parallel Sieve of Eratosthenes
+## Algorithm: Parallel Segmented Sieve of Eratosthenes
 
-The program uses a parallelized version of the Sieve of Eratosthenes algorithm, which is highly efficient for finding all prime numbers up to a given limit `maxNum`. The process is divided into several phases:
+The program uses a parallelized Segmented Sieve of Eratosthenes. This approach is efficient for large `maxNum` by improving cache locality and enabling better load balancing.
 
 1. **Phase 1: Base Prime Calculation (Sequential)**
-    - A small, fast sequential Sieve of Eratosthenes is run to find all prime numbers up to `sqrt(maxNum)`. These are called `basePrimes`. This step is very quick because `sqrt(maxNum)` is significantly smaller than `maxNum`.
-    - Example: If `maxNum` is 10,000,000, `sqrt(maxNum)` is ~3162. Finding primes up to 3162 is trivial.
+    - A fast, optimized sequential Sieve of Eratosthenes is run to find all prime numbers up to `sqrt(maxNum)`. These are the `basePrimes` that will be used for sieving.
+    - Example: If `maxNum` is 200,000,000, `sqrt(maxNum)` is ~14142. Finding primes up to 14142 is quick.
 
-2. **Phase 2: Sieve Initialization**
-    - A boolean slice (e.g., `isNotPrime`) of size `maxNum + 1` is created. `isNotPrime[i] == true` will indicate that `i` is composite. Initially, all entries from 2 onwards are considered potentially prime (marked `false`). `isNotPrime[0]` and `isNotPrime[1]` are marked `true`.
+2. **Phase 2: Task Dispatch and Worker Setup**
+    - The total number range `[0...maxNum]` is divided into smaller, manageable segments of a fixed `SegmentSizeInNumbers` (e.g., 524,288 numbers per segment).
+    - A pool of worker Goroutines (e.g., 4 workers) is created.
+    - A `tasks` channel is used to dispatch segment tasks (defined by a `low` and `high` boundary) to the workers.
+    - A `results` channel is used by workers to send back the primes they find in their processed segments.
 
-3. **Phase 3: Parallel Marking of Multiples (Concurrent)**
-    - This is the core concurrent part of the algorithm.
-    - The list of `basePrimes` (found in Phase 1) is divided among the available worker Goroutines (e.g., 4 workers).
-    - Each worker Goroutine is assigned a subset of these `basePrimes`.
-    - For each `basePrime` `p` it is responsible for, the worker iterates through multiples of `p` (starting from `p*p`) up to `maxNum` and marks them as composite (e.g., `isNotPrime[multiple] = true`) in the shared `isNotPrime` slice.
-    - Writes to the `isNotPrime` slice are inherently safe in this context because:
-        - We are only ever setting a `false` to `true`.
-        - Setting it to `true` multiple times (if different workers' base primes have common multiples) is idempotent and harmless.
-    - A `sync.WaitGroup` is used to ensure that the main process waits until all worker Goroutines have completed marking their assigned multiples.
+3. **Phase 3: Parallel Segment Sieving (Concurrent)**
+    - Each worker Goroutine continuously pulls a `SegmentTask` from the `tasks` channel.
+    - For its assigned segment `[low, high]`, the worker:
+        - Creates a local boolean bitset (e.g., `segmentBitset`) representing only the numbers within its current segment. The size of this bitset is `SegmentSizeInNumbers / 8` bytes.
+        - Iterates through the `basePrimes` (found in Phase 1). For each base prime `p`:
+            - It calculates the first multiple of `p` that is greater than or equal to `low` and also greater than or equal to `p*p`.
+            - It then marks all multiples of `p` within the `[low, high]` range in its `segmentBitset`.
+        - This use of local bitsets for each segment improves CPU cache performance compared to a single large shared bitset.
+    - After sieving its segment, the worker scans its `segmentBitset`, collects all unmarked numbers (which are primes in that segment's range), and sends them as a `SegmentResult` to the `results` channel.
+    - Workers repeat this process until the `tasks` channel is closed (meaning all segments have been dispatched).
 
-4. **Phase 4: Result Collection (Sequential)**
-    - After all workers have finished, the main Goroutine iterates through the `isNotPrime` slice from 2 up to `maxNum`.
-    - If `isNotPrime[i]` is `false`, then `i` is a prime number and is added to the final list of primes.
-    - This list is then returned.
+4. **Phase 4: Result Collection and Sorting (Sequential/Concurrent Collection)**
+    - The main Goroutine (or a dedicated collector Goroutine) receives `SegmentResult` (lists of primes) from the `results` channel from all workers.
+    - These lists of primes from different segments are aggregated into a single list.
+    - Since segments can be processed out of order, the final aggregated list of primes is sorted to ensure they are in ascending order.
+    - This sorted list is the final result.
 
-This parallel sieve approach significantly reduces computation time compared to parallel trial division, especially for large ranges, by eliminating redundant checks and leveraging the sieve's inherent efficiency in marking composites.
+This segmented approach provides good load balancing because faster workers or those processing segments with fewer primes will finish their tasks quicker and pick up new segments from the `tasks` channel.
 
 ## Progress Reporting
 
 The program provides progress updates using the `log` package:
 
-- Timestamps are included in log messages.
-- Key stages are logged: start, finding base primes, starting parallel marking, completion of marking, collection of results, and final summary.
-- During the collection of primes from the sieve, progress can be logged at specified intervals (e.g., every `SieveProgressReportInterval` primes found).
+- Timestamps (including microseconds) are included in log messages.
+- Key stages are logged: start, finding base primes, dispatching segment tasks, collection of segment results, sorting, and final summary.
 - Total time taken for key phases and the overall operation is logged.
 
 ## System Architecture
 
 ```mermaid
 graph TD
-    A[Main Goroutine] -- "Starts & Orchestrates" --> FPG["findPrimesWithSieve Function"]
+    Main["Main Goroutine"] -- "Starts & Orchestrates" --> SFS["findPrimesWithSegmentedSieve Function"]
 
-    subgraph "findPrimesWithSieve Function"
-        P1["Phase 1: Sequential Sieve for Base Primes"]
-        P2["Phase 2: Initialize Main Sieve Array"]
-        P3["Phase 3: Parallel Marking"]
-        P4["Phase 4: Collect Results"]
+    subgraph "findPrimesWithSegmentedSieve Function"
+        P1["Phase 1: Sequential Sieve for Base Primes (up to sqrt(maxNum))"]
+        Dispatcher["Task Dispatcher Goroutine"]
+        Collector["Result Collector Goroutine"]
+        P4["Phase 4: Final Sort & Aggregation"]
+        TaskChan["tasks (chan SegmentTask)"]
+        ResultChan["results (chan SegmentResult)"]
     end
 
-    FPG -- "Executes" --> P1
-    P1 -- "Returns basePrimes" --> FPG
-    FPG -- "Executes" --> P2
-    P2 -- "Creates isNotPrime array" --> FPG
-    FPG -- "Spawns Workers for" --> P3
-    FPG -- "Waits via sync.WaitGroup" --> P3
-    FPG -- "Executes" --> P4
-    P4 -- "Returns finalPrimes" --> FPG
+    SFS -- "Executes" --> P1
+    P1 -- "Returns basePrimes" --> SFS
+    SFS -- "Launches" --> Dispatcher
+    SFS -- "Launches Workers" --> WorkersPool
+    SFS -- "Launches" --> Collector
+    SFS -- "Performs" --> P4
 
-    subgraph "Phase 3: Parallel Marking"
+
+    Dispatcher -- "Sends SegmentTask" --> TaskChan
+
+    subgraph "Worker Pool (e.g., 4 Workers)"
         W1["Worker 1 Goroutine"]
         W2["Worker 2 Goroutine"]
-        W3["Worker 3 Goroutine"]
-        W4["Worker 4 Goroutine"]
-        SharedSieve["Shared isNotPrime Array"]
-        SysWG["sync.WaitGroup"]
+        WN["...Worker N Goroutine"]
+        LocalBitset1["Local Bitset (Segment)"]
+        LocalBitset2["Local Bitset (Segment)"]
+        LocalBitsetN["Local Bitset (Segment)"]
 
-        P3 -- "Manages" --> SysWG
-        P3 -- "Distributes basePrimes segments" --> W1
-        P3 -- "Distributes basePrimes segments" --> W2
-        P3 -- "Distributes basePrimes segments" --> W3
-        P3 -- "Distributes basePrimes segments" --> W4
+        W1 -- "Reads from" --> TaskChan
+        W2 -- "Reads from" --> TaskChan
+        WN -- "Reads from" --> TaskChan
 
-        W1 -- "Marks Multiples in" --> SharedSieve
-        W2 -- "Marks Multiples in" --> SharedSieve
-        W3 -- "Marks Multiples in" --> SharedSieve
-        W4 -- "Marks Multiples in" --> SharedSieve
+        W1 -- "Uses basePrimes &" --> LocalBitset1
+        W1 -- "Processes segment, finds primes" --> LocalBitset1
+        LocalBitset1 -- "Primes" --> W1
+        W1 -- "Sends SegmentResult" --> ResultChan
 
-        W1 -- "Calls wg.Done()" --> SysWG
-        W2 -- "Calls wg.Done()" --> SysWG
-        W3 -- "Calls wg.Done()" --> SysWG
-        W4 -- "Calls wg.Done()" --> SysWG
+        W2 -- "Uses basePrimes &" --> LocalBitset2
+        W2 -- "Processes segment, finds primes" --> LocalBitset2
+        LocalBitset2 -- "Primes" --> W2
+        W2 -- "Sends SegmentResult" --> ResultChan
+
+        WN -- "Uses basePrimes &" --> LocalBitsetN
+        WN -- "Processes segment, finds primes" --> LocalBitsetN
+        LocalBitsetN -- "Primes" --> WN
+        WN -- "Sends SegmentResult" --> ResultChan
     end
 
-    Log["Logging Output"]
-    A -- "Interacts with" --> Log
-    FPG -- "Interacts with" --> Log
+    Collector -- "Receives SegmentResult from" --> ResultChan
+    Collector -- "Aggregates primes" --> P4
+    P4 -- "Returns finalSortedPrimes" --> SFS
 
-    style FPG fill:#f9f,stroke:#333,stroke-width:2px
+    Main -- "Receives finalSortedPrimes" --> Output["Final Primes List"]
+    Log["Logging Output"]
+    SFS -- "Logs to" --> Log
+    Dispatcher -- "Logs to" --> Log
+    Collector -- "Logs to" --> Log
+
+    style SFS fill:#f9f,stroke:#333,stroke-width:2px
     style P1 fill:#lightgrey,stroke:#333
-    style P2 fill:#lightgrey,stroke:#333
-    style P3 fill:#lightblue,stroke:#333
+    style Dispatcher fill:#add8e6,stroke:#333
+    style Collector fill:#add8e6,stroke:#333
     style P4 fill:#lightgrey,stroke:#333
+    style TaskChan fill:#orange,stroke:#333
+    style ResultChan fill:#orange,stroke:#333
     style W1 fill:#aqua,stroke:#333
     style W2 fill:#aqua,stroke:#333
-    style W3 fill:#aqua,stroke:#333
-    style W4 fill:#aqua,stroke:#333
-    style SharedSieve fill:#orange,stroke:#333
-    style SysWG fill:#grey,stroke:#333
-    style Log fill:#beige,stroke:#333
+    style WN fill:#aqua,stroke:#333
+    style LocalBitset1 fill:#beige,stroke:#333
+    style LocalBitset2 fill:#beige,stroke:#333
+    style LocalBitsetN fill:#beige,stroke:#333
+    style Output fill:#lightgreen,stroke:#333
+    style Log fill:#grey,stroke:#333
 ```
 
 ## Algorithm Flowchart
 
 ```mermaid
 graph TD
-    Start["Start findPrimesWithSieve maxNum, numWorkers"] --> CheckMax{"maxNum < 2?"}
-    CheckMax -- "Yes" --> ReturnEmpty["Return empty int slice"] --> EndA["End"]
-    CheckMax -- "No" --> InitTotalTime["Record Start Time"]
+    Start["Start findPrimesWithSegmentedSieve(maxNum, numWorkers)"] --> CheckMax{"maxNum < 2?"}
+    CheckMax -- "Yes" --> ReturnEmpty["Return empty []int"] --> EndA["End"]
+    CheckMax -- "No" --> InitOverallTime["Record Overall Start Time"]
 
-    InitTotalTime --> Phase1Start["Phase 1: Find Base Primes"]
-    Phase1Start --> SeqSieve["Run Sequential Sieve up to sqrt(maxNum)"]
+    InitOverallTime --> Phase1["Phase 1: Find Base Primes"]
+    Phase1 --> SeqSieve["Run sieveOfEratosthenesSequentialBase(sqrt(maxNum))"]
     SeqSieve --> StoreBasePrimes["Store basePrimes"]
     StoreBasePrimes --> LogBasePrimes["Log: Found basePrimes"]
 
-    LogBasePrimes --> Phase2Start["Phase 2: Initialize Main Sieve"]
-    Phase2Start --> CreateSieveArray["Create 'isNotPrime' boolean array size maxNum+1"]
-    CreateSieveArray --> Mark01["Mark isNotPrime[0] and isNotPrime[1] = true"]
+    LogBasePrimes --> SetupChannels["Create 'tasks' & 'results' channels"]
+    SetupChannels --> LaunchWorkers["Launch numWorkers Goroutines (segmentedSieveWorker)"]
+    LaunchWorkers --> LaunchDispatcher["Launch Task Dispatcher Goroutine"]
 
-    Mark01 --> Phase3Start["Phase 3: Parallel Marking"]
-    Phase3Start --> InitWaitGroup["Initialize sync.WaitGroup"]
-    InitWaitGroup --> DistributeWork["Distribute basePrimes among numWorkers"]
-    DistributeWork --> LoopWorkers{"Loop for each Worker 0 to numWorkers-1"}
-    LoopWorkers -- "Spawn Goroutine" --> WorkerJob["Worker Goroutine"]
-    WorkerJob --> IncrementWG["wg.Add(1)"]
-    WorkerJob --> GetAssignedPrimes["Get its assigned segment of basePrimes"]
-    WorkerJob --> LoopBasePrimes{"For each assigned p in basePrimes"}
-    LoopBasePrimes -- "Iterate" --> MarkMultiples["Mark multiples of p (from p*p) in 'isNotPrime' as true"]
-    MarkMultiples --> LoopBasePrimes
-    LoopBasePrimes -- "Done with assigned primes" --> DecrementWG["wg.Done()"]
-    DecrementWG --> WorkerEnd["Worker Goroutine Ends"]
+    subgraph "Task Dispatcher Goroutine"
+        DispatchStart["Start"]
+        LoopSegments{"For each segment [low,high] in [0..maxNum]"}
+        DispatchTask["Send SegmentTask{low,high} to 'tasks' channel"]
+        LoopSegments -- "Next Segment" --> LoopSegments
+        LoopSegments -- "All Segments Dispatched" --> CloseTasks["Close 'tasks' channel"]
+        CloseTasks --> DispatchEnd["End Dispatcher Goroutine"]
+        DispatchStart --> LoopSegments
+    end
 
+    subgraph "segmentedSieveWorker Goroutine (runs for each worker)"
+        WorkerStart["Start Worker"]
+        LoopTasks{"For task in 'tasks' channel (range)"}
+        CreateLocalBitset["Create local bitset for segment [task.low, task.high]"]
+        SieveSegment["Sieve local bitset using basePrimes (mark composites)"]
+        CollectSegmentPrimes["Collect primes from local bitset"]
+        SendResults["Send SegmentResult (primes) to 'results' channel"]
+        LoopTasks -- "Next task" --> LoopTasks
+        LoopTasks -- "'tasks' channel closed" --> WorkerEnd["End Worker Goroutine (wg.Done())"]
+        WorkerStart --> LoopTasks
+    end
 
-    LoopWorkers -- "Next Worker Iteration" --> LoopWorkers
-    LoopWorkers -- "All Workers Spawned" --> WaitAllWorkers["wg.Wait()"]
+    LaunchDispatcher --> LaunchCollector["Launch Result Collector Goroutine"]
 
-    WaitAllWorkers --> LogMarkingDone["Log: Parallel Marking Complete"]
-    LogMarkingDone --> Phase4Start["Phase 4: Collect Results"]
-    Phase4Start --> InitResultSlice["Initialize finalPrimes slice"]
-    InitResultSlice --> LoopSieveArray{"Iterate i from 2 to maxNum"}
-    LoopSieveArray -- "Check" --> IsPrime{"isNotPrime[i] == false?"}
-    IsPrime -- "Yes" --> AddToResults["Add i to finalPrimes"] --> LoopSieveArray
-    IsPrime -- "No" --> LoopSieveArray
-    LoopSieveArray -- "Done Iterating" --> LogCollectionDone["Log: Result Collection Complete"]
+    subgraph "Result Collector Goroutine"
+        CollectorStart["Start"]
+        InitCollectedPrimesList["Initialize list for intermediateCollectedPrimes"]
+        LoopResults{"For result in 'results' channel (range)"}
+        AppendPrimes["Append result.primes to intermediateCollectedPrimesList"]
+        ManageCollectorWG["wgCollector.Done() (if used for segment count)"]
+        LoopResults -- "Next result" --> LoopResults
+        LoopResults -- "'results' channel closed" --> CollectorEnd["End Collector Goroutine"]
+        CollectorStart --> InitCollectedPrimesList
+        InitCollectedPrimesList --> LoopResults
+    end
 
-    LogCollectionDone --> LogTotalTime["Log: Total Execution Time"]
-    LogTotalTime --> ReturnResults["Return finalPrimes"] --> EndB["End"]
+    LaunchCollector --> WaitCollector["Wait for all segment results (e.g., wgCollector.Wait())"]
+    WaitCollector --> CloseResultsChan["Close 'results' channel"]
+    CloseResultsChan --> LogCollectionDone["Log: Collection Complete"]
+
+    LogCollectionDone --> Phase4["Phase 4: Final Assembly & Sort"]
+    Phase4 --> AggregateAllPrimes["Combine all primes from intermediateCollectedPrimesList"]
+    AggregateAllPrimes --> SortPrimes["Sort the final list of primes"]
+    SortPrimes --> LogSortDone["Log: Sorting Complete"]
+
+    LogSortDone --> WaitWorkersEnd["Wait for all worker goroutines (wgWorkers.Wait())"]
+    WaitWorkersEnd --> LogTotalTime["Log: Total Execution Time"]
+    LogTotalTime --> ReturnFinalPrimes["Return final sorted primes"] --> EndB["End"]
 
     style Start fill:#lightgreen,stroke:#333,stroke-width:2px
     style EndA fill:#lightcoral,stroke:#333,stroke-width:2px
     style EndB fill:#lightcoral,stroke:#333,stroke-width:2px
-    style WorkerJob fill:#lightblue,stroke:#333
+    style WorkerStart fill:#lightblue,stroke:#333
     style WorkerEnd fill:#lightblue,stroke:#333
+    style DispatchStart fill:#peachpuff,stroke:#333
+    style DispatchEnd fill:#peachpuff,stroke:#333
+    style CollectorStart fill:#aquamarine,stroke:#333
+    style CollectorEnd fill:#aquamarine,stroke:#333
 ```
 
 ## Requirements
 
-- Go (version 1.x)
+- Go (version 1.18 or later recommended for generics, though this example doesn't strictly need them)
 
 ### Project Structure
 
 ```txt
 .
-├── go.mod // Go module definition
-├── go.sum // Go module checksums
-├── main.go // Main application logic, including sieve implementation and concurrency
-├── main_test.go // Unit tests for sieve logic and overall orchestration
-└── README.md // This file
+├── go.mod        // Go module definition
+├── go.sum        // Go module checksums
+├── main.go       // Main application logic, segmented sieve implementation
+├── main_test.go  // Unit tests for sieve logic
+└── README.md     // This file
 ```
 
-## Local Development and Running
+## Local Development, Running, Testing, and Benchmarking
 
 ```bash
 go run .
 ```
 
-**Results**:
+**Results (will vary based on machine and `MaxNumberForSieveGlobal`):**
 
 ```txt
-01:34:45.155237 Concurrent Prime Finder (Sieve Version) - Starting
-01:34:45.155888 Finding primes up to 200000000 using 4 workers (Sieve method).
-01:34:45.155888 Sieve: Finding base primes up to 14142
-01:34:45.156435 Sieve: Found 1663 base primes in 546.9µs
-01:34:45.156977 Sieve: Starting parallel marking with 4 workers. Total base primes: 1663, per worker approx: 416
-01:34:46.790291 Sieve: Parallel marking completed in 1.6338561s
-01:34:46.806854 Sieve: Collected 1000000 primes so far (last: 15485863)...
-01:34:46.825056 Sieve: Collected 2000000 primes so far (last: 32452843)...
-01:34:46.842301 Sieve: Collected 3000000 primes so far (last: 49979687)...
-01:34:46.860588 Sieve: Collected 4000000 primes so far (last: 67867967)...
-01:34:46.878723 Sieve: Collected 5000000 primes so far (last: 86028121)...
-01:34:46.896873 Sieve: Collected 6000000 primes so far (last: 104395301)...
-01:34:46.914394 Sieve: Collected 7000000 primes so far (last: 122949823)...
-01:34:46.932544 Sieve: Collected 8000000 primes so far (last: 141650939)...
-01:34:46.951694 Sieve: Collected 9000000 primes so far (last: 160481183)...
-01:34:46.969835 Sieve: Collected 10000000 primes so far (last: 179424673)...
-01:34:46.989908 Sieve: Collected 11000000 primes so far (last: 198491317)...
-01:34:46.990929 Sieve: Result collection completed in 200.6379ms. Total primes: 11078937
-01:34:46.990929 Sieve: Total time for findPrimesWithSieve: 1.8350409s
-01:34:46.991943 Found 11078937 prime numbers up to 200000000.
-01:34:46.991943 Concurrent Prime Finder (Sieve Version) - Finished
+02:38:01.282794 Concurrent Prime Finder (Segmented Sieve Version) - Starting
+02:38:01.283329 Finding primes up to 200000000 using 4 workers (Segmented Sieve method).
+Segment size: 524288 numbers.
+02:38:01.283865 Segmented Sieve: Finding base primes up to 14142
+02:38:01.283865 Segmented Sieve: Found 1663 base primes in 0s
+02:38:01.577385 Segmented Sieve: All 382 segment tasks dispatched in 293.5203ms
+02:38:01.583896 Segmented Sieve: All segment results (382 segments) collected in 300.0319ms. Raw primes collected: 11078937
+02:38:01.754615 Segmented Sieve: Primes combined and sorted in 170.7187ms. Total unique primes found: 11078937
+02:38:01.754615 Segmented Sieve: Total time for findPrimesWithSegmentedSieve: 470.7506ms
+02:38:01.754615 Found 11078937 prime numbers up to 200000000.
+02:38:01.754615 Concurrent Prime Finder (Segmented Sieve Version) - Finished
 ```
 
 ### Running Tests
@@ -220,88 +253,54 @@ go run .
 go test -v -cover ./...
 ```
 
-**Results**:
+**Test Output:**
 
-```go
-=== RUN   TestIsPrime
-=== RUN   TestIsPrime/negative_number
-=== RUN   TestIsPrime/zero
-=== RUN   TestIsPrime/one
-=== RUN   TestIsPrime/two
-=== RUN   TestIsPrime/three
-=== RUN   TestIsPrime/four
-=== RUN   TestIsPrime/large_prime
-=== RUN   TestIsPrime/large_non-prime
-=== RUN   TestIsPrime/prime_number_5
-=== RUN   TestIsPrime/non-prime_number_6
-=== RUN   TestIsPrime/prime_number_7
-=== RUN   TestIsPrime/non-prime_number_9
-=== RUN   TestIsPrime/prime_number_13
---- PASS: TestIsPrime (0.00s)
-    --- PASS: TestIsPrime/negative_number (0.00s)
-    --- PASS: TestIsPrime/zero (0.00s)
-    --- PASS: TestIsPrime/one (0.00s)
-    --- PASS: TestIsPrime/two (0.00s)
-    --- PASS: TestIsPrime/three (0.00s)
-    --- PASS: TestIsPrime/four (0.00s)
-    --- PASS: TestIsPrime/large_prime (0.00s)
-    --- PASS: TestIsPrime/large_non-prime (0.00s)
-    --- PASS: TestIsPrime/prime_number_5 (0.00s)
-    --- PASS: TestIsPrime/non-prime_number_6 (0.00s)
-    --- PASS: TestIsPrime/prime_number_7 (0.00s)
-    --- PASS: TestIsPrime/non-prime_number_9 (0.00s)
-    --- PASS: TestIsPrime/prime_number_13 (0.00s)
-=== RUN   TestSieveOfEratosthenesSequential
-=== RUN   TestSieveOfEratosthenesSequential/primes_up_to_10
-=== RUN   TestSieveOfEratosthenesSequential/primes_up_to_20
-=== RUN   TestSieveOfEratosthenesSequential/primes_up_to_2
-=== RUN   TestSieveOfEratosthenesSequential/primes_up_to_1
-=== RUN   TestSieveOfEratosthenesSequential/primes_up_to_0
-=== RUN   TestSieveOfEratosthenesSequential/primes_up_to_30
---- PASS: TestSieveOfEratosthenesSequential (0.00s)
-    --- PASS: TestSieveOfEratosthenesSequential/primes_up_to_10 (0.00s)
-    --- PASS: TestSieveOfEratosthenesSequential/primes_up_to_20 (0.00s)
-    --- PASS: TestSieveOfEratosthenesSequential/primes_up_to_2 (0.00s)
-    --- PASS: TestSieveOfEratosthenesSequential/primes_up_to_1 (0.00s)
-    --- PASS: TestSieveOfEratosthenesSequential/primes_up_to_0 (0.00s)
-    --- PASS: TestSieveOfEratosthenesSequential/primes_up_to_30 (0.00s)
-=== RUN   TestFindPrimesWithSieve_Orchestration
-=== RUN   TestFindPrimesWithSieve_Orchestration/sieve_primes_up_to_10_with_1_worker
-2025/06/15 01:32:28 Sieve: Finding base primes up to 3
-2025/06/15 01:32:28 Sieve: Found 2 base primes in 530.1µs
-2025/06/15 01:32:28 Sieve: Starting parallel marking with 1 workers. Total base primes: 2, per worker approx: 2
-2025/06/15 01:32:28 Sieve: Parallel marking completed in 0s
-2025/06/15 01:32:28 Sieve: Result collection completed in 0s. Total primes: 4
-2025/06/15 01:32:28 Sieve: Total time for findPrimesWithSieve: 1.0567ms
-=== RUN   TestFindPrimesWithSieve_Orchestration/sieve_primes_up_to_30_with_4_workers
-2025/06/15 01:32:28 Sieve: Finding base primes up to 5
-2025/06/15 01:32:28 Sieve: Found 3 base primes in 0s
-2025/06/15 01:32:28 Sieve: Starting parallel marking with 4 workers. Total base primes: 3, per worker approx: 1
-2025/06/15 01:32:28 Sieve: Parallel marking completed in 0s
-2025/06/15 01:32:28 Sieve: Result collection completed in 0s. Total primes: 10
-2025/06/15 01:32:28 Sieve: Total time for findPrimesWithSieve: 0s
-=== RUN   TestFindPrimesWithSieve_Orchestration/sieve_primes_up_to_50_with_2_workers
-2025/06/15 01:32:28 Sieve: Finding base primes up to 7
-2025/06/15 01:32:28 Sieve: Found 4 base primes in 0s
-2025/06/15 01:32:28 Sieve: Starting parallel marking with 2 workers. Total base primes: 4, per worker approx: 2
-2025/06/15 01:32:28 Sieve: Parallel marking completed in 0s
-2025/06/15 01:32:28 Sieve: Result collection completed in 0s. Total primes: 15
-2025/06/15 01:32:28 Sieve: Total time for findPrimesWithSieve: 529.1µs
-=== RUN   TestFindPrimesWithSieve_Orchestration/sieve_primes_up_to_1_(no_primes)_with_4_workers
-=== RUN   TestFindPrimesWithSieve_Orchestration/sieve_primes_up_to_100_with_4_workers
-2025/06/15 01:32:28 Sieve: Finding base primes up to 10
-2025/06/15 01:32:28 Sieve: Found 4 base primes in 0s
-2025/06/15 01:32:28 Sieve: Starting parallel marking with 4 workers. Total base primes: 4, per worker approx: 1
-2025/06/15 01:32:28 Sieve: Parallel marking completed in 0s
-2025/06/15 01:32:28 Sieve: Result collection completed in 0s. Total primes: 25
-2025/06/15 01:32:28 Sieve: Total time for findPrimesWithSieve: 0s
---- PASS: TestFindPrimesWithSieve_Orchestration (0.00s)
-    --- PASS: TestFindPrimesWithSieve_Orchestration/sieve_primes_up_to_10_with_1_worker (0.00s)
-    --- PASS: TestFindPrimesWithSieve_Orchestration/sieve_primes_up_to_30_with_4_workers (0.00s)
-    --- PASS: TestFindPrimesWithSieve_Orchestration/sieve_primes_up_to_50_with_2_workers (0.00s)
-    --- PASS: TestFindPrimesWithSieve_Orchestration/sieve_primes_up_to_1_(no_primes)_with_4_workers (0.00s)
-    --- PASS: TestFindPrimesWithSieve_Orchestration/sieve_primes_up_to_100_with_4_workers (0.00s)
+```txt
+=== RUN   TestSieveOfEratosthenesSequentialBase
+=== RUN   TestSieveOfEratosthenesSequentialBase/primes_up_to_10
+=== RUN   TestSieveOfEratosthenesSequentialBase/primes_up_to_20
+=== RUN   TestSieveOfEratosthenesSequentialBase/primes_up_to_2
+=== RUN   TestSieveOfEratosthenesSequentialBase/primes_up_to_1
+=== RUN   TestSieveOfEratosthenesSequentialBase/primes_up_to_0
+=== RUN   TestSieveOfEratosthenesSequentialBase/primes_up_to_30
+=== RUN   TestSieveOfEratosthenesSequentialBase/primes_up_to_3
+=== RUN   TestSieveOfEratosthenesSequentialBase/primes_up_to_4
+--- PASS: TestSieveOfEratosthenesSequentialBase (0.00s)
+    --- PASS: TestSieveOfEratosthenesSequentialBase/primes_up_to_10 (0.00s)
+    --- PASS: TestSieveOfEratosthenesSequentialBase/primes_up_to_20 (0.00s)
+    --- PASS: TestSieveOfEratosthenesSequentialBase/primes_up_to_2 (0.00s)
+    --- PASS: TestSieveOfEratosthenesSequentialBase/primes_up_to_1 (0.00s)
+    --- PASS: TestSieveOfEratosthenesSequentialBase/primes_up_to_0 (0.00s)
+    --- PASS: TestSieveOfEratosthenesSequentialBase/primes_up_to_30 (0.00s)
+    --- PASS: TestSieveOfEratosthenesSequentialBase/primes_up_to_3 (0.00s)
+    --- PASS: TestSieveOfEratosthenesSequentialBase/primes_up_to_4 (0.00s)
+=== RUN   TestFindPrimesWithSegmentedSieve_Orchestration
+=== RUN   TestFindPrimesWithSegmentedSieve_Orchestration/sieve_up_to_10,_1_worker,_seg_5
+=== RUN   TestFindPrimesWithSegmentedSieve_Orchestration/sieve_up_to_30,_4_workers,_seg_10
+=== RUN   TestFindPrimesWithSegmentedSieve_Orchestration/sieve_up_to_50,_2_workers,_seg_20
+=== RUN   TestFindPrimesWithSegmentedSieve_Orchestration/sieve_up_to_1_(no_primes),_4_workers,_seg_10
+=== RUN   TestFindPrimesWithSegmentedSieve_Orchestration/sieve_up_to_100,_4_workers,_seg_25
+=== RUN   TestFindPrimesWithSegmentedSieve_Orchestration/sieve_up_to_7,_2_workers,_seg_3_-_primes_only_in_base_up_to_sqrt(7)=2
+--- PASS: TestFindPrimesWithSegmentedSieve_Orchestration (0.00s)
+    --- PASS: TestFindPrimesWithSegmentedSieve_Orchestration/sieve_up_to_10,_1_worker,_seg_5 (0.00s)
+    --- PASS: TestFindPrimesWithSegmentedSieve_Orchestration/sieve_up_to_30,_4_workers,_seg_10 (0.00s)
+    --- PASS: TestFindPrimesWithSegmentedSieve_Orchestration/sieve_up_to_50,_2_workers,_seg_20 (0.00s)
+    --- PASS: TestFindPrimesWithSegmentedSieve_Orchestration/sieve_up_to_1_(no_primes),_4_workers,_seg_10 (0.00s)
+    --- PASS: TestFindPrimesWithSegmentedSieve_Orchestration/sieve_up_to_100,_4_workers,_seg_25 (0.00s)
+    --- PASS: TestFindPrimesWithSegmentedSieve_Orchestration/sieve_up_to_7,_2_workers,_seg_3_-_primes_only_in_base_up_to_sqrt(7)=2 (0.00s)
 PASS
-coverage: 86.8% of statements
-ok      go-parallel-prime-seeker        0.384s
+coverage: 84.6% of statements
+ok      go-parallel-prime-seeker        0.365s  coverage: 84.6% of statements
+```
+
+## Benchmarking
+
+```bash
+go test -bench=.
+```
+
+**Result:**
+
+```txt
+ok      go-parallel-prime-seeker        0.313s
 ```
